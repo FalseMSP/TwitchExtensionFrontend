@@ -45,7 +45,22 @@ var FEED_ID = 'gd-queue';
   var POLL_MS_TWITCH = 30000;  // self-healing snapshot refresh
   var POLL_MS_DEV    = 5000;   // faster loop while developing without Twitch
 
-  var DEV_MODE = !(window.Twitch && window.Twitch.ext);
+  // The Twitch helper (twitch-ext.min.js) is loaded synchronously in <head>,
+  // but in some Twitch iframe contexts it can land slightly after viewer.js
+  // (which sits at the end of <body>). Wait briefly for it before falling
+  // back to dev mode — otherwise we'd wrongly treat "helper not ready yet"
+  // as "no helper at all" and start polling the iframe's own origin.
+  function _hasHelper() { return !!(window.Twitch && window.Twitch.ext && typeof window.Twitch.ext.onAuthorized === 'function'); }
+  function _waitForHelper(cb) {
+    if (_hasHelper()) return cb(true);
+    var tries = 0;
+    var iv = setInterval(function () {
+      if (_hasHelper()) { clearInterval(iv); cb(true); }
+      else if (++tries > 40) { clearInterval(iv); cb(false); } // ~2 s @ 50 ms
+    }, 50);
+  }
+
+  var DEV_MODE = false; // resolved by _waitForHelper in init
   var API = String(EBS_ORIGIN || '').replace(/\/+$/, '');
 
   // Local-development override (works without the Twitch iframe):
@@ -54,7 +69,9 @@ var FEED_ID = 'gd-queue';
   try {
     var stored = window.localStorage.getItem('multirrorEbsOrigin');
     if (stored !== null) API = stored.replace(/\/+$/, '');
-    else if (DEV_MODE) API = ''; // same origin → pairs with a local mock/proxy
+    // Note: when no helper is found we DON'T blank API anymore — that
+    // caused panels inside a Twitch iframe to wrongly poll the iframe's
+    // own origin for /ext/state. If EBS_ORIGIN is set, always use it.
   } catch (e) { /* storage unavailable — keep EBS_ORIGIN */ }
 
   var state    = null;   // last envelope from the EBS
@@ -66,12 +83,7 @@ var FEED_ID = 'gd-queue';
 
   // Dev-mode stand-in for the Twitch identity (?login=name in the URL) —
   // only read when there is no Twitch helper, purely for local testing.
-  if (DEV_MODE) {
-    try {
-      var m = /[?&]login=([^&]+)/.exec(window.location.search);
-      if (m) myLogin = decodeURIComponent(m[1]).trim().toLowerCase() || null;
-    } catch (e) { /* bad query string — stay anonymous */ }
-  }
+  // (Resolved inside init() once we know whether the helper loaded.)
 
   // ── DOM refs (filled in init) ────────────────────────────────────────────
   var viewActive, viewInactive, inactiveDetail,
@@ -108,6 +120,29 @@ var FEED_ID = 'gd-queue';
     form.addEventListener('submit', onSubmit);
     renderIdentity();
 
+    // Wait briefly for the Twitch helper (it loads from <head> but may
+    // land after viewer.js in some Twitch iframe contexts). If it never
+    // appears, fall back to dev mode.
+    _waitForHelper(function (helperFound) {
+      DEV_MODE = !helperFound;
+      if (!helperFound && window.console) {
+        window.console.warn('[multirror-ext] Twitch helper not detected after 2s — entering dev mode');
+      }
+
+      if (DEV_MODE) {
+        // Dev-mode-only ?login= override (harmless inside Twitch — Twitch
+        // doesn't add ?login= to the iframe URL).
+        try {
+          var m = /[?&]login=([^&]+)/.exec(window.location.search);
+          if (m) myLogin = decodeURIComponent(m[1]).trim().toLowerCase() || null;
+        } catch (e) { /* bad query string */ }
+      }
+
+      boot();
+    });
+  }
+
+  function boot() {
     if (!DEV_MODE) {
       var ext = window.Twitch.ext;
 
