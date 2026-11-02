@@ -34,7 +34,7 @@
  * queue data can never inject HTML).
  * ─────────────────────────────────────────────────────────────────────────── */
 
-var EBS_ORIGIN = 'https://REPLACE-WITH-YOUR-BOT-DOMAIN';   /* ← EDIT ME */
+var EBS_ORIGIN = 'https://redtwitchintegration.duckdns.org';   /* ← EDIT ME */
 
 /* Which registered feed this front-end renders (the gd-queue plugin's). */
 var FEED_ID = 'gd-queue';
